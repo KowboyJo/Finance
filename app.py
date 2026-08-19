@@ -172,7 +172,7 @@ if run_button:
       if not pe_ratio:
         pe_ratio = 15.0
 
-      hist = stock.history(period="1yr")
+      hist = stock.history(period="1y")
       if hist.empty or len(hist) < 50:
         continue
 
