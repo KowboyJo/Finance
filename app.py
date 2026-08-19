@@ -1,5 +1,5 @@
 # Screening Loop
-  for i, ticker in enumerate(universe):
+    for i, ticker in enumerate(universe):
     status_text.text(
         f"Screening ({i+1}/{len(universe)}): Checking {ticker}..."
     )
