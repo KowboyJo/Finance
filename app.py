@@ -11,7 +11,7 @@ from screener_logic import (
 
 # Page Configuration
 st.set_page_config(
-    page_title="Large-Cap AI CSP Income Screener",
+    page_title="NASDAQ 500 AI CSP Screener",
     page_icon="📈",
     layout="wide",
 )
