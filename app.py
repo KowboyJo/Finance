@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📈 Large-Cap AI Cash-Secured Put (CSP) Income Screener")
+st.title("📈 NASDAQ 500 AI CSP Screener")
 st.markdown(
     "Scan large-cap equities for high-efficiency income near technical support"
     " with advanced risk filters."
