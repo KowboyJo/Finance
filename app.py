@@ -11,12 +11,12 @@ from screener_logic import (
 
 # Page Configuration
 st.set_page_config(
-    page_title="Large-Cap AI CSP Income Screener",
+    page_title="KowboyJo's NASDAQ 500 AI CSP Scanner",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("📈 Large-Cap AI Cash-Secured Put (CSP) Income Screener")
+st.title("📈 KowboyJo's NASDAQ 500 AI CSP Scanner")
 st.markdown(
     "Scan large-cap equities for high-efficiency income near technical support"
     " with advanced risk filters."
