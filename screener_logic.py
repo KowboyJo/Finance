@@ -129,7 +129,7 @@ def analyze_puts(
         "Strike": strike,
         "Put Premium": round(mid_price, 2),
         "IV (%)": round(iv, 1),
-        "Ratio (%)": round(ratio, 2),
+        "Premium Yield (%)": round(ratio, 2),
         "Strike vs Lower Band (%)": buffer_pct,
     }
   except Exception:
