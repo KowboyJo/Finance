@@ -65,7 +65,7 @@ if use_custom_exp:
   exp_date_input = st.sidebar.date_input("Target Expiration Date")
   target_expiration = exp_date_input.strftime("%Y-%m-%d")
 
-min_revenue = 10.0 * 1e9
+min_revenue = 3.0 * 1e9
 min_cash = 1.0 * 1e9
 
 st.sidebar.markdown("---")
