@@ -19,7 +19,7 @@ st.set_page_config(
 st.title("📈 Large-Cap AI Cash-Secured Put (CSP) Income Screener")
 st.markdown(
     "Scan large-cap equities for high-efficiency income near technical support"
-    " with advanced risk filters."
+    " with advanced risk and balance sheet filters."
 )
 
 # --- SIDEBAR CONFIGURATION ---
@@ -36,6 +36,23 @@ max_pct_support = st.sidebar.number_input(
 
 target_delta = st.sidebar.number_input(
     "Target Put Delta (OTM)", value=0.30, step=0.05, format="%.2f"
+)
+
+# Fundamental & Balance Sheet Controls
+st.sidebar.markdown("---")
+st.sidebar.header("Balance Sheet & Cash Flow Filters")
+
+max_debt_equity = st.sidebar.number_input(
+    "Max Debt-to-Equity Ratio (%)",
+    value=150.0,
+    step=10.0,
+    help="Limits corporate leverage to protect against assignment on over-leveraged equities.",
+)
+
+require_positive_fcf = st.sidebar.checkbox(
+    "Require Positive Free Cash Flow",
+    value=True,
+    help="Requires underlying companies to generate positive FCF rather than funding operations via debt/dilution.",
 )
 
 # Refinement Toggles & Inputs
@@ -111,6 +128,18 @@ if run_button:
                 if not pe_ratio:
                     pe_ratio = 15.0
 
+                # --- NEW BALANCE SHEET & CASH FLOW CHECKS ---
+                total_cash = info.get("totalCash", 0)
+                free_cash_flow = info.get("freeCashflow", 0)
+                debt_to_equity = info.get("debtToEquity", None)
+
+                # Free Cash Flow Validation
+                fcf_pass = (free_cash_flow > 0) if require_positive_fcf else True
+
+                # Debt-to-Equity Validation
+                de_pass = (debt_to_equity <= max_debt_equity) if debt_to_equity is not None else True
+
+                # Technical Moving Average Calculations
                 hist = stock.history(period="1y")
                 if hist.empty or len(hist) < 50:
                     continue
@@ -119,10 +148,14 @@ if run_button:
                 sma_200 = hist["Close"].rolling(window=window_size).mean().iloc[-1]
                 pct_above_support = ((price - sma_200) / sma_200) * 100
 
+                # Primary Screening Decision Logic
                 if (
                     pe_ratio <= max_pe
                     and pct_above_support <= max_pct_support
                     and revenue >= min_revenue
+                    and total_cash >= min_cash
+                    and fcf_pass
+                    and de_pass
                 ):
                     passed_tickers.append(ticker)
             except Exception:
