@@ -155,6 +155,13 @@ def analyze_puts(
         puts = puts.dropna(subset=["bid", "ask", "strike"])
         puts = puts[(puts["bid"] > 0) & (puts["ask"] > puts["bid"])]
 
+        # === CRITICAL RULE: Only OTM or ATM puts (strike ≤ current price) ===
+        puts = puts[puts["strike"] <= spot_price]
+
+        if puts.empty:
+            return None
+
+        # Spread filter
         puts["spread_pct"] = (puts["ask"] - puts["bid"]) / ((puts["ask"] + puts["bid"]) / 2) * 100
         puts = puts[puts["spread_pct"] <= max_spread_pct]
         if puts.empty:
