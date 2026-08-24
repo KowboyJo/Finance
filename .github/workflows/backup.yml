@@ -1,4 +1,4 @@
-name: Run Finance App Backup Script
+name: Run Finance App Backup Workflow
 
 on:
   push:
@@ -20,8 +20,11 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Run Backup Script
-      run: python backup.py
+    - name: Create Backup Directory & Zip Target Files
+      run: |
+        mkdir -p backups
+        timestamp=$(date +'%Y%m%d_%H%M%S')
+        zip -r "backups/finance_backup_${timestamp}.zip" app.py screener_logic.py
 
     - name: Upload Backup Artifact
       uses: actions/upload-artifact@v4
