@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+
 from screener_logic import (
     ai_score_trade,
     analyze_puts,
@@ -9,7 +10,9 @@ from screener_logic import (
     find_target_expirations,
 )
 
+# ------------------------------------------------------------------
 # Page Configuration
+# ------------------------------------------------------------------
 st.set_page_config(
     page_title="Large-Cap AI CSP Income Screener",
     page_icon="📈",
@@ -18,11 +21,15 @@ st.set_page_config(
 
 st.title("📈 Large-Cap AI Cash-Secured Put (CSP) Income Screener")
 st.markdown(
-    "Scan large-cap equities for high-efficiency income near technical support"
-    " with advanced risk and balance sheet filters."
+    "Scan large-cap equities for **high-efficiency income** near technical support "
+    "with advanced risk and balance-sheet filters.  \n"
+    "Goal: **Highest yield with the lowest realistic chance of assignment**, "
+    "or assignment is acceptable when fundamentals strongly support an upward move."
 )
 
-# --- SIDEBAR CONFIGURATION ---
+# ------------------------------------------------------------------
+# SIDEBAR
+# ------------------------------------------------------------------
 st.sidebar.header("Screener Parameters")
 
 max_pe = st.sidebar.number_input("Max P/E Ratio", value=40.0, step=1.0)
@@ -35,7 +42,11 @@ max_pct_support = st.sidebar.number_input(
 )
 
 target_delta = st.sidebar.number_input(
-    "Target Put Delta (OTM)", value=0.30, step=0.05, format="%.2f"
+    "Target Put Delta (OTM)",
+    value=0.25,          # moved more OTM by default
+    step=0.05,
+    format="%.2f",
+    help="Lower = more out-of-the-money = lower chance of assignment.",
 )
 
 # Fundamental & Balance Sheet Controls
@@ -55,17 +66,19 @@ require_positive_fcf = st.sidebar.checkbox(
     help="Requires underlying companies to generate positive FCF rather than funding operations via debt/dilution.",
 )
 
-# Refinement Toggles & Inputs
+# Advanced Risk Controls
 st.sidebar.markdown("---")
 st.sidebar.header("Advanced Risk Controls")
+
 exclude_earnings = st.sidebar.checkbox(
     "Exclude Earnings Within Expiration Cycle",
     value=True,
     help="Filters out tickers that have an earnings release scheduled before the option expires.",
 )
+
 max_spread_pct = st.sidebar.number_input(
     "Max Bid-Ask Spread (%)",
-    value=15.0,
+    value=12.0,
     step=1.0,
     help="Filters out option contracts where the percentage spread exceeds this threshold to ensure liquidity.",
 )
@@ -76,6 +89,7 @@ if use_custom_exp:
     exp_date_input = st.sidebar.date_input("Target Expiration Date")
     target_expiration = exp_date_input.strftime("%Y-%m-%d")
 
+# Hardcoded minimums (shown for transparency)
 min_revenue = 3.0 * 1e9
 min_cash = 1.0 * 1e9
 
@@ -87,7 +101,9 @@ st.sidebar.text("• Quote Type: EQUITY")
 
 run_button = st.sidebar.button("Run Scanner", type="primary")
 
-# --- MAIN EXECUTION FLOW ---
+# ------------------------------------------------------------------
+# MAIN EXECUTION
+# ------------------------------------------------------------------
 if run_button:
     with st.spinner("🔍 Running deep scan across market universe & option chains..."):
         universe = fetch_universe()
@@ -100,6 +116,7 @@ if run_button:
         for i, ticker in enumerate(universe):
             status_text.text(f"Screening ({i+1}/{len(universe)}): Checking {ticker}...")
             progress_bar.progress((i + 1) / len(universe))
+
             try:
                 stock = yf.Ticker(ticker)
                 info = stock.info
@@ -107,14 +124,12 @@ if run_button:
                 if info.get("quoteType") != "EQUITY":
                     continue
 
-                price = info.get("currentPrice", info.get("regularMarketPrice", 0))
-                pe_ratio = info.get("trailingPE", info.get("forwardPE", 0))
-                
-                # Primary Revenue Check
-                revenue = info.get("totalRevenue", 0)
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+                pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 15.0
 
-                # Fallback via Income Statement if API omits totalRevenue
-                if not revenue or revenue == 0:
+                # Revenue
+                revenue = info.get("totalRevenue") or 0
+                if not revenue:
                     try:
                         fin = stock.financials
                         if not fin.empty and "Total Revenue" in fin.index:
@@ -125,21 +140,15 @@ if run_button:
                 if not price or price <= 0:
                     continue
 
-                if not pe_ratio:
-                    pe_ratio = 15.0
+                # Balance sheet / cash flow
+                total_cash = info.get("totalCash") or 0
+                free_cash_flow = info.get("freeCashflow") or 0
+                debt_to_equity = info.get("debtToEquity")
 
-                # --- NEW BALANCE SHEET & CASH FLOW CHECKS ---
-                total_cash = info.get("totalCash", 0)
-                free_cash_flow = info.get("freeCashflow", 0)
-                debt_to_equity = info.get("debtToEquity", None)
-
-                # Free Cash Flow Validation
                 fcf_pass = (free_cash_flow > 0) if require_positive_fcf else True
+                de_pass = (debt_to_equity is None) or (debt_to_equity <= max_debt_equity)
 
-                # Debt-to-Equity Validation
-                de_pass = (debt_to_equity <= max_debt_equity) if debt_to_equity is not None else True
-
-                # Technical Moving Average Calculations
+                # 200-day SMA
                 hist = stock.history(period="1y")
                 if hist.empty or len(hist) < 50:
                     continue
@@ -148,7 +157,7 @@ if run_button:
                 sma_200 = hist["Close"].rolling(window=window_size).mean().iloc[-1]
                 pct_above_support = ((price - sma_200) / sma_200) * 100
 
-                # Primary Screening Decision Logic
+                # Final fundamental + technical filter
                 if (
                     pe_ratio <= max_pe
                     and pct_above_support <= max_pct_support
@@ -158,12 +167,14 @@ if run_button:
                     and de_pass
                 ):
                     passed_tickers.append(ticker)
+
             except Exception:
                 continue
 
         status_text.text(
             f"Screening complete! Found {len(passed_tickers)} matching equities near support."
         )
+        progress_bar.empty()
 
         if not passed_tickers:
             st.warning("No stocks matched your custom thresholds near support.")
@@ -174,9 +185,13 @@ if run_button:
 
             results = []
             for ticker in passed_tickers:
-                tk = yf.Ticker(ticker)
                 try:
-                    spot_price = tk.history(period="1d")["Close"].iloc[-1]
+                    tk = yf.Ticker(ticker)
+                    hist = tk.history(period="5d")
+                    if hist.empty:
+                        continue
+                    spot_price = hist["Close"].iloc[-1]
+
                     exp_dates = tk.options
                     if not exp_dates:
                         continue
@@ -196,41 +211,48 @@ if run_button:
                                 results.append(res)
                     else:
                         weekly_exp, monthly_exp = find_target_expirations(exp_dates)
+
                         if weekly_exp:
                             w_res = analyze_puts(
                                 ticker,
                                 weekly_exp,
                                 spot_price,
-                                "5-Day Weekly",
+                                "5-12 Day Weekly",
                                 target_delta,
                                 max_spread_pct,
                                 exclude_earnings,
                             )
                             if w_res:
                                 results.append(w_res)
+
                         if monthly_exp:
                             m_res = analyze_puts(
                                 ticker,
                                 monthly_exp,
                                 spot_price,
-                                "30-Day Monthly",
+                                "25-45 Day Monthly",
                                 target_delta,
                                 max_spread_pct,
                                 exclude_earnings,
                             )
                             if m_res:
                                 results.append(m_res)
+
                 except Exception:
                     continue
 
             if results:
                 df = pd.DataFrame(results)
+
+                # Add AI Score
+                df["AI Score"] = df.apply(ai_score_trade, axis=1)
+
+                # Sort by the new score (highest first)
+                df = df.sort_values(by="AI Score", ascending=False).reset_index(drop=True)
+
+                # Chart links
                 df["Chart"] = df["Ticker"].apply(
                     lambda t: f"https://finance.yahoo.com/chart/{t}"
-                )
-                df["AI Score"] = df.apply(ai_score_trade, axis=1)
-                df = df.sort_values(by="Yield (%)", ascending=False).reset_index(
-                    drop=True
                 )
 
                 st.subheader("📊 Tactical Trade Matrix (Near Support)")
@@ -241,9 +263,24 @@ if run_button:
                             "Yahoo Chart",
                             help="Open interactive advanced chart in a new tab",
                             display_text="📈 View Chart",
-                        )
+                        ),
+                        "AI Score": st.column_config.NumberColumn(
+                            "AI Score",
+                            help="Higher = better combination of yield + low assignment risk + fundamental upside",
+                            format="%.1f",
+                        ),
+                        "Prob Assign %": st.column_config.NumberColumn(
+                            "Prob Assign %",
+                            help="Approximate probability the put finishes in-the-money",
+                            format="%.1f",
+                        ),
+                        "Ann. Yield (%)": st.column_config.NumberColumn(
+                            "Ann. Yield (%)",
+                            format="%.1f",
+                        ),
                     },
                     use_container_width=True,
+                    height=500,
                 )
 
                 st.download_button(
@@ -253,19 +290,22 @@ if run_button:
                     mime="text/csv",
                 )
 
-                top_trade = df.iloc[0]
-                st.markdown("### 🤖 AI Trade Synthesis Matrix")
+                # Top recommendation card
+                top = df.iloc[0]
+                st.markdown("### 🤖 Top Recommendation")
                 st.info(
-                    f"• **Top Recommendation:** [{top_trade['Ticker']}](https://finance.yahoo.com/chart/{top_trade['Ticker']}) ({top_trade['Cycle']})\n\n"
-                    f"• **Current Stock Price:** ${top_trade['Stock Price']}\n\n"
-                    f"• **Optimal Strike:** ${top_trade['Strike']} (IV: {top_trade['IV (%)']}%)\n\n"
-                    f"• **Put Premium (Mid):** ${top_trade['Put Premium']}\n\n"
-                    f"• **Capital Efficiency:** Yields {top_trade['Yield (%)']}% return over {top_trade['DTE']} days.\n\n"
-                    f"• **Tactical Edge:** Optimal balance of volatility capture and theta decay velocity near major moving average support."
+                    f"**[{top['Ticker']}](https://finance.yahoo.com/chart/{top['Ticker']})** — {top['Cycle']}\n\n"
+                    f"- **Stock Price:** ${top['Stock Price']}\n"
+                    f"- **Strike:** ${top['Strike']}  |  **OTM:** {top.get('OTM %', 'N/A')}%\n"
+                    f"- **Premium (mid):** ${top['Put Premium']}\n"
+                    f"- **Yield:** {top['Yield (%)']}%  →  **Annualized:** {top.get('Ann. Yield (%)', 'N/A')}%\n"
+                    f"- **Approx. Assignment Probability:** {top.get('Prob Assign %', 'N/A')}%\n"
+                    f"- **DTE:** {top['DTE']} days  |  **IV:** {top['IV (%)']}%\n"
+                    f"- **AI Score:** {top['AI Score']}"
                 )
             else:
                 st.warning(
-                    "No options found matching your parameters, spread criteria, or earnings filters for the selected cycle."
+                    "No options found matching your parameters, spread criteria, or earnings filters."
                 )
 else:
     st.info("Adjust your parameters in the sidebar and click **Run Scanner** to begin.")
