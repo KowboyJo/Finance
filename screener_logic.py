@@ -1,165 +1,252 @@
+# screener_logic.py
 from datetime import datetime
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
+try:
+    from scipy.stats import norm
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
-def fetch_universe():
+
+# ------------------------------------------------------------------
+# 1. Universe
+# ------------------------------------------------------------------
+def fetch_universe() -> list[str]:
     """
-    Fetches the S&P 500 constituents ticker symbols.
-    Falls back to a core list of large-cap tech/income stocks if offline.
+    Returns a list of large-cap tickers (S&P 500).
+    Falls back to a hard-coded liquid list if Wikipedia fails.
     """
     try:
-        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        df = pd.read_csv(url)
-        return df["Symbol"].str.replace(".", "-", regex=False).tolist()
+        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        df = tables[0]
+        tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
+        return sorted(tickers)
     except Exception:
         return [
-            "UBER", "AAPL", "MSFT", "GOOGL", "AMZN",
-            "NVDA", "META", "JPM", "WMT", "AMD"
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "BRK-B", "LLY", "AVGO",
+            "JPM", "V", "XOM", "UNH", "MA", "PG", "JNJ", "HD", "COST", "ABBV", "MRK",
+            "CVX", "PEP", "KO", "WMT", "BAC", "CRM", "TMO", "ACN", "LIN", "MCD",
+            "CSCO", "ABT", "DHR", "WFC", "TXN", "PM", "NEE", "AMD", "ORCL", "IBM",
+            "QCOM", "CAT", "GE", "AMAT", "INTU", "SPGI", "ISRG", "NOW", "BKNG", "ADI",
+            "AMGN", "PFE", "T", "DIS", "NKE", "LOW", "UPS", "BA", "RTX", "HON",
+            "GS", "MS", "BLK", "SCHW", "AXP", "C", "USB", "PNC", "TFC", "COF",
         ]
 
 
-def find_target_expirations(available_dates):
+# ------------------------------------------------------------------
+# 2. Target expirations
+# ------------------------------------------------------------------
+def find_target_expirations(exp_dates: list[str]) -> tuple[str | None, str | None]:
     """
-    Finds target option expiration dates:
-    - Best weekly (~5 DTE)
-    - Best monthly (~30 DTE)
+    Returns (weekly_exp, monthly_exp).
+    Weekly  ≈ 5–12 DTE
+    Monthly ≈ 25–45 DTE
     """
-    today = datetime.today()
-    best_weekly, best_monthly = None, None
-    min_w_diff, min_m_diff = float("inf"), float("inf")
+    today = datetime.now().date()
+    weekly = None
+    monthly = None
 
-    for date_str in available_dates:
-        exp_date = datetime.strptime(date_str, "%Y-%m-%d")
-        diff_days = (exp_date - today).days
-
-        if diff_days < 1:
+    for exp_str in sorted(exp_dates):
+        try:
+            exp = datetime.strptime(exp_str, "%Y-%m-%d").date()
+            dte = (exp - today).days
+            if 4 <= dte <= 12 and weekly is None:
+                weekly = exp_str
+            if 25 <= dte <= 45 and monthly is None:
+                monthly = exp_str
+        except ValueError:
             continue
 
-        if abs(diff_days - 5) < min_w_diff and diff_days <= 10:
-            min_w_diff = abs(diff_days - 5)
-            best_weekly = date_str
-
-        if abs(diff_days - 30) < min_m_diff and 21 <= diff_days <= 45:
-            min_m_diff = abs(diff_days - 30)
-            best_monthly = date_str
-
-    if not best_weekly and len(available_dates) > 0:
-        best_weekly = available_dates[0]
-    if not best_monthly and len(available_dates) > 1:
-        best_monthly = available_dates[min(4, len(available_dates) - 1)]
-
-    return best_weekly, best_monthly
+    return weekly, monthly
 
 
-def check_earnings_conflict(ticker_symbol, exp_date):
+# ------------------------------------------------------------------
+# Helper: approximate probability of finishing ITM (assignment risk)
+# ------------------------------------------------------------------
+def approx_prob_itm(spot: float, strike: float, dte: int, iv: float) -> float:
     """
-    Checks if an upcoming earnings date occurs on or before the expiration date.
-    Returns True if there is an earnings event within the expiration window.
+    Rough probability that the put finishes in-the-money.
+    Uses Black-Scholes N(-d2) when scipy is available, otherwise a simple heuristic.
     """
-    try:
-        tk = yf.Ticker(ticker_symbol)
-        cal = tk.calendar
-        earnings_date = None
+    if dte <= 0 or iv <= 0 or spot <= 0 or strike <= 0:
+        return 0.5
 
-        if isinstance(cal, dict) and "Earnings Date" in cal:
-            ed_list = cal["Earnings Date"]
-            if ed_list:
-                earnings_date = pd.to_datetime(ed_list[0])
-        elif isinstance(cal, pd.DataFrame) and not cal.empty:
-            if "Earnings Date" in cal.index:
-                earnings_date = pd.to_datetime(cal.loc["Earnings Date"].iloc[0])
+    if HAS_SCIPY:
+        try:
+            T = dte / 365.0
+            sigma = iv / 100.0
+            d2 = (np.log(spot / strike) + (-0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+            return float(norm.cdf(-d2))
+        except Exception:
+            pass
 
-        if earnings_date is not None:
-            exp_dt = datetime.strptime(exp_date, "%Y-%m-%d")
-            if datetime.today() <= earnings_date <= exp_dt:
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def calculate_rsi(data, window=14):
-    """Calculates 14-period Relative Strength Index (RSI)."""
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    # Fallback heuristic based on moneyness
+    moneyness = strike / spot
+    if moneyness < 0.90:
+        return 0.08
+    elif moneyness < 0.95:
+        return 0.18
+    elif moneyness < 1.00:
+        return 0.35
+    elif moneyness < 1.05:
+        return 0.55
+    else:
+        return 0.75
 
 
+# ------------------------------------------------------------------
+# 3. Analyze puts for one ticker + expiration
+# ------------------------------------------------------------------
 def analyze_puts(
-    ticker_symbol,
-    exp_date,
-    spot_price,
-    expiry_label,
-    target_delta,
-    max_spread,
-    check_earnings,
-):
+    ticker: str,
+    expiration: str,
+    spot_price: float,
+    cycle_label: str,
+    target_delta: float = 0.25,
+    max_spread_pct: float = 12.0,
+    exclude_earnings: bool = True,
+) -> dict | None:
     """
-    Analyzes put option chains for a given ticker and expiration date.
-    Applies bid-ask spread filters and calculates Yield (%).
+    Finds the put closest to the target delta that also passes
+    liquidity and earnings filters.
+    Returns a clean dict ready for the results DataFrame, or None.
     """
-    if check_earnings and check_earnings_conflict(ticker_symbol, exp_date):
-        return None
-
-    tk = yf.Ticker(ticker_symbol)
     try:
-        chain = tk.option_chain(exp_date)
-        puts = chain.puts
+        tk = yf.Ticker(ticker)
+
+        # ----- Earnings filter -----
+        if exclude_earnings:
+            try:
+                cal = tk.calendar
+                if cal is not None:
+                    earn_date = None
+                    if isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.index:
+                        val = cal.loc["Earnings Date"]
+                        earn_date = val.iloc[0] if hasattr(val, "iloc") else val
+                    elif isinstance(cal, dict) and "Earnings Date" in cal:
+                        ed = cal["Earnings Date"]
+                        earn_date = ed[0] if isinstance(ed, (list, tuple)) else ed
+
+                    if earn_date is not None:
+                        if isinstance(earn_date, str):
+                            earn_date = datetime.strptime(str(earn_date)[:10], "%Y-%m-%d").date()
+                        elif hasattr(earn_date, "date"):
+                            earn_date = earn_date.date()
+
+                        exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+                        if earn_date <= exp_date:
+                            return None
+            except Exception:
+                pass
+
+        # ----- Option chain -----
+        chain = tk.option_chain(expiration)
+        puts = chain.puts.copy()
         if puts.empty:
             return None
 
-        # Filter OTM puts
-        otm_puts = puts[puts["strike"] <= spot_price].copy()
-        if otm_puts.empty:
-            otm_puts = puts
+        puts = puts.dropna(subset=["bid", "ask", "strike"])
+        puts = puts[(puts["bid"] > 0) & (puts["ask"] > puts["bid"])]
 
-        # Target Strike Selection using Delta heuristic
-        otm_puts["target_dist"] = abs(
-            (otm_puts["strike"] / spot_price) - (1.0 - (target_delta * 0.15))
-        )
-        chosen_put = otm_puts.loc[otm_puts["target_dist"].idxmin()]
+        # Spread filter
+        puts["spread_pct"] = (puts["ask"] - puts["bid"]) / ((puts["ask"] + puts["bid"]) / 2) * 100
+        puts = puts[puts["spread_pct"] <= max_spread_pct]
+        if puts.empty:
+            return None
 
-        strike = chosen_put["strike"]
-        bid = chosen_put["bid"] if pd.notna(chosen_put["bid"]) else 0.0
-        ask = chosen_put["ask"] if pd.notna(chosen_put["ask"]) else 0.0
-        mid_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else chosen_put["lastPrice"]
+        # Delta approximation
+        puts["moneyness"] = puts["strike"] / spot_price
 
-        # Maximum Bid-Ask Spread Filter
-        if bid > 0 and ask > 0 and mid_price > 0:
-            spread_pct = ((ask - bid) / mid_price) * 100
-            if spread_pct > max_spread:
-                return None
+        # Prefer real delta when available
+        if "delta" in puts.columns and puts["delta"].notna().any():
+            puts["approx_delta"] = puts["delta"]
+        else:
+            # Rough OTM put delta proxy
+            puts["approx_delta"] = -np.clip(1.15 * (1 - puts["moneyness"]), 0.05, 0.90)
 
-        iv = chosen_put.get("impliedVolatility", 0.0) * 100
-        dte = max(1, (datetime.strptime(exp_date, "%Y-%m-%d") - datetime.today()).days)
-        yield_pct = (mid_price / spot_price) * 100
+        puts["delta_diff"] = (puts["approx_delta"].abs() - target_delta).abs()
+        puts = puts.sort_values("delta_diff")
+
+        best = puts.iloc[0]
+
+        mid = (float(best["bid"]) + float(best["ask"])) / 2
+        strike = float(best["strike"])
+        dte = (datetime.strptime(expiration, "%Y-%m-%d").date() - datetime.now().date()).days
+        if dte <= 0:
+            return None
+
+        collateral = strike * 100
+        premium = mid * 100
+        yield_pct = (premium / collateral) * 100
+        annualized_yield = yield_pct * (365 / max(dte, 1))
+
+        iv = 0.0
+        if "impliedVolatility" in best and pd.notna(best["impliedVolatility"]):
+            iv = float(best["impliedVolatility"]) * 100
+
+        delta_approx = float(best["approx_delta"])
+        otm_pct = ((spot_price - strike) / spot_price) * 100
+        prob_assign = approx_prob_itm(spot_price, strike, dte, iv) * 100
 
         return {
-            "Ticker": ticker_symbol,
-            "Cycle": expiry_label,
+            "Ticker": ticker,
+            "Cycle": cycle_label,
+            "Expiration": expiration,
             "DTE": dte,
             "Stock Price": round(spot_price, 2),
-            "Strike": strike,
-            "Put Premium": round(mid_price, 2),
-            "IV (%)": round(iv, 1),
+            "Strike": round(strike, 2),
+            "OTM %": round(otm_pct, 1),
+            "Put Premium": round(mid, 2),
             "Yield (%)": round(yield_pct, 2),
+            "Ann. Yield (%)": round(annualized_yield, 1),
+            "IV (%)": round(iv, 1),
+            "Delta (approx)": round(delta_approx, 2),
+            "Prob Assign %": round(prob_assign, 1),
+            "Spread (%)": round(float(best["spread_pct"]), 1),
+            "Bid": round(float(best["bid"]), 2),
+            "Ask": round(float(best["ask"]), 2),
         }
+
     except Exception:
         return None
 
 
-def ai_score_trade(row):
+# ------------------------------------------------------------------
+# 4. AI / quality score
+# ------------------------------------------------------------------
+def ai_score_trade(row: pd.Series) -> float:
     """
-    Calculates AI Trade Score based on yield velocity and IV efficiency.
+    Higher score = better combination of:
+    - High annualized yield
+    - Low assignment probability
+    - Extra credit when the put is further OTM
+    - Soft bonus for liquidity
     """
-    yield_pct = row["Yield (%)"]
-    iv = row["IV (%)"]
-    dte = row["DTE"]
+    try:
+        ann_yield = float(row.get("Ann. Yield (%)", 0) or 0)
+        prob_assign = float(row.get("Prob Assign %", 50) or 50) / 100.0
+        otm = float(row.get("OTM %", 0) or 0)
+        spread = float(row.get("Spread (%)", 20) or 20)
+        dte = max(float(row.get("DTE", 30) or 30), 1)
 
-    daily_yield_velocity = yield_pct / dte
-    iv_score = min(iv / 40.0, 1.5)
-    ai_score = (daily_yield_velocity * 100) * (1 + iv_score)
-    return round(ai_score, 2)
+        # Core components
+        yield_component = ann_yield * 1.6
+        risk_penalty = prob_assign * 70
+        safety_bonus = max(otm, 0) * 0.9
+        liquidity_bonus = max(0, 12 - spread) * 1.3
+
+        # Slight preference for 20-40 DTE
+        dte_factor = 1.0
+        if 20 <= dte <= 40:
+            dte_factor = 1.15
+        elif dte < 10:
+            dte_factor = 0.9
+
+        score = (yield_component - risk_penalty + safety_bonus + liquidity_bonus) * dte_factor
+        return round(max(score, 0), 2)
+
+    except Exception:
+        return 0.0
