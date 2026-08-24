@@ -1,35 +1,30 @@
-import os
-import shutil
-from datetime import datetime
+name: Run Finance App Backup Script
 
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
-def create_backup():
-  # Create a timestamped backup folder name
-  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  backup_dir = f"backups/backup_{timestamp}"
-  os.makedirs(backup_dir, exist_ok=True)
+jobs:
+  backup:
+    runs-on: ubuntu-latest
 
-  # List of target files to back up
-  files_to_backup = ["app.py", "screener_logic.py"]
-  backed_up_files = []
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-  for file_name in files_to_backup:
-    if os.path.exists(file_name):
-      shutil.copy(file_name, os.path.join(backup_dir, file_name))
-      backed_up_files.append(file_name)
-    else:
-      print(f"⚠️ Warning: {file_name} not found. Skipped.")
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-  if backed_up_files:
-    # Compress the folder into a single ZIP file
-    zip_path = shutil.make_archive(backup_dir, "zip", backup_dir)
-    # Remove the uncompressed folder after archiving
-    shutil.rmtree(backup_dir)
-    print(f"✅ Backup created successfully: {zip_path}")
-    print(f"📦 Files included: {', '.join(backed_up_files)}")
-  else:
-    print("❌ No files were found to back up.")
+    - name: Run Backup Script
+      run: python backup.py
 
-
-if __name__ == "__main__":
-  create_backup()
+    - name: Upload Backup Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: finance-screener-backup
+        path: backups/
