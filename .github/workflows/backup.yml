@@ -1,0 +1,27 @@
+name: Create Timestamped Backup
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create timestamped backup
+        run: |
+          mkdir -p backups
+          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+          cp app.py "backups/app_finance_backup_${TIMESTAMP}.py"
+
+      - name: Commit and push backup
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add backups/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Manual backup: Finance app.py timestamped" && git push)
