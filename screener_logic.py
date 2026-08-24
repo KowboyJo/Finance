@@ -63,7 +63,6 @@ def fetch_universe() -> list[str]:
         "CARR", "OTIS", "JCI", "TT", "AME", "FTV",
     ]
 
-
 def find_target_expirations(exp_dates: list[str]) -> tuple[str | None, str | None]:
     today = datetime.now().date()
     weekly = None
@@ -73,9 +72,11 @@ def find_target_expirations(exp_dates: list[str]) -> tuple[str | None, str | Non
         try:
             exp = datetime.strptime(exp_str, "%Y-%m-%d").date()
             dte = (exp - today).days
-            if 4 <= dte <= 12 and weekly is None:
+
+            # Wider windows to actually find contracts
+            if 3 <= dte <= 21 and weekly is None:
                 weekly = exp_str
-            if 25 <= dte <= 45 and monthly is None:
+            if 22 <= dte <= 60 and monthly is None:
                 monthly = exp_str
         except ValueError:
             continue
