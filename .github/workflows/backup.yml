@@ -1,27 +1,35 @@
-name: Create Timestamped Backup
+import os
+import shutil
+from datetime import datetime
 
-on:
-  workflow_dispatch:  # Manual trigger only
 
-jobs:
-  backup:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+def create_backup():
+  # Create a timestamped backup folder name
+  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+  backup_dir = f"backups/backup_{timestamp}"
+  os.makedirs(backup_dir, exist_ok=True)
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # List of target files to back up
+  files_to_backup = ["app.py", "screener_logic.py"]
+  backed_up_files = []
 
-      - name: Create timestamped backup
-        run: |
-          mkdir -p backups
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          cp app.py "backups/app_finance_backup_${TIMESTAMP}.py"
+  for file_name in files_to_backup:
+    if os.path.exists(file_name):
+      shutil.copy(file_name, os.path.join(backup_dir, file_name))
+      backed_up_files.append(file_name)
+    else:
+      print(f"⚠️ Warning: {file_name} not found. Skipped.")
 
-      - name: Commit and push backup
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add backups/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Manual backup: Finance app.py timestamped" && git push)
+  if backed_up_files:
+    # Compress the folder into a single ZIP file
+    zip_path = shutil.make_archive(backup_dir, "zip", backup_dir)
+    # Remove the uncompressed folder after archiving
+    shutil.rmtree(backup_dir)
+    print(f"✅ Backup created successfully: {zip_path}")
+    print(f"📦 Files included: {', '.join(backed_up_files)}")
+  else:
+    print("❌ No files were found to back up.")
+
+
+if __name__ == "__main__":
+  create_backup()
