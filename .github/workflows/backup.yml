@@ -24,7 +24,18 @@ jobs:
       run: |
         mkdir -p backups
         timestamp=$(date +'%Y%m%d_%H%M%S')
-        zip -r "backups/finance_backup_${timestamp}.zip" app.py screener_logic.py
+        
+        # Verify files exist before zipping to prevent command errors
+        files=""
+        [ -f "app.py" ] && files="$files app.py"
+        [ -f "screener_logic.py" ] && files="$files screener_logic.py"
+        
+        if [ -n "$files" ]; then
+          zip -r "backups/finance_backup_${timestamp}.zip" $files
+        else
+          echo "No files found to back up."
+          exit 1
+        fi
 
     - name: Upload Backup Artifact
       uses: actions/upload-artifact@v4
