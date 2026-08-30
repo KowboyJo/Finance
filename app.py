@@ -23,6 +23,18 @@ st.markdown(
 )
 
 # --- SIDEBAR CONFIGURATION ---
+
+st.sidebar.header("Screener Parameters")
+
+# Mag 7 Filter Toggle
+scan_mode = st.sidebar.radio(
+    "Target Universe",
+    options=["Mag 7 Only", "Full Universe"],
+    index=0,
+    help="Select 'Mag 7 Only' to run quick scans specifically on Apple, Microsoft, Alphabet, Amazon, Nvidia, Meta, and Tesla.",
+)
+MAG_7_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+
 st.sidebar.header("Screener Parameters")
 
 max_pe = st.sidebar.number_input("Max P/E Ratio", value=40.0, step=1.0)
