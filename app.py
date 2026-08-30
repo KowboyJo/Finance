@@ -85,7 +85,11 @@ run_button = st.sidebar.button("Run Scanner", type="primary")
 # --- MAIN EXECUTION FLOW ---
 if run_button:
     with st.spinner("🔍 Running deep scan across market universe & option chains..."):
-        universe = fetch_universe()
+        # NEW:
+if scan_mode == "Mag 7 Only":
+    universe = MAG_7_TICKERS
+else:
+    universe = fetch_universe()
         st.info(f"Loaded {len(universe)} symbols. Screening for fundamentals & support...")
 
         passed_tickers = []
