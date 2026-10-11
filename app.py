@@ -21,6 +21,17 @@ st.markdown(
 # ==========================================
 # SIDEBAR CONFIGURATION
 # ==========================================
+FILTER_DEFAULTS = {'selected_universes': ['Custom Symbols'], 'custom_symbols': 'PLTR, MSTR, NVDA, TSLA, SPY, QQQ', 'available_cash': 100000.0, 'max_pe': 40.0, 'max_pct_support': 20.0, 'target_delta': 0.3, 'exclude_earnings': True, 'max_spread_pct': 15.0, 'use_custom_exp': False}
+
+def clear_all_filters():
+    for name, default in FILTER_DEFAULTS.items():
+        st.session_state[name] = default
+    st.session_state.pop("exp_date_input", None)
+
+for name, default in FILTER_DEFAULTS.items():
+    if name not in st.session_state:
+        st.session_state[name] = default
+
 st.sidebar.header("🎯 Target Universe Selection")
 
 selected_universes = st.sidebar.multiselect(
@@ -33,6 +44,7 @@ selected_universes = st.sidebar.multiselect(
     ],
     default=["Custom Symbols"],
     help="Select custom symbols, watchlists, or both.",
+    key="selected_universes",
 )
 
 custom_symbols = st.sidebar.text_area(
@@ -40,6 +52,7 @@ custom_symbols = st.sidebar.text_area(
     value="PLTR, MSTR, NVDA, TSLA, SPY, QQQ",
     help="Enter multiple ticker symbols separated by commas or new lines.",
     disabled="Custom Symbols" not in selected_universes,
+    key="custom_symbols",
 )
 
 st.sidebar.markdown("---")
@@ -50,6 +63,7 @@ available_cash = st.sidebar.number_input(
     value=100000.0,
     step=5000.0,
     help="Total cash available to secure short put option contracts.",
+    key="available_cash",
 )
 
 max_pe = st.sidebar.number_input(
@@ -57,15 +71,18 @@ max_pe = st.sidebar.number_input(
     value=40.0,
     step=1.0,
     help="Filters valuation for standard equities. Ignored for Mag 7, ETFs, and custom symbols.",
+    key="max_pe",
 )
 max_pct_support = st.sidebar.number_input(
     "Max % Above 200-Day SMA (Support)",
     value=20.0,
     step=1.0,
     help="Filters for stocks trading within X% of their long-term 200-day moving average support level.",
+    key="max_pct_support",
 )
 target_delta = st.sidebar.number_input(
-    "Target Put Delta (OTM)", value=0.30, step=0.05, format="%.2f"
+    "Target Put Delta (OTM)", value=0.30, step=0.05, format="%.2f",
+    key="target_delta",
 )
 
 st.sidebar.markdown("---")
@@ -75,6 +92,7 @@ exclude_earnings = st.sidebar.checkbox(
     "Exclude Earnings Within Expiration Cycle",
     value=True,
     help="Filters out tickers that have an earnings release scheduled before the option expires.",
+    key="exclude_earnings",
 )
 
 max_spread_pct = st.sidebar.number_input(
@@ -82,19 +100,21 @@ max_spread_pct = st.sidebar.number_input(
     value=15.0,
     step=1.0,
     help="Filters out option contracts where the percentage spread exceeds this threshold.",
+    key="max_spread_pct",
 )
 
-use_custom_exp = st.sidebar.checkbox("Specify Exact Expiration Date")
+use_custom_exp = st.sidebar.checkbox("Specify Exact Expiration Date", key="use_custom_exp")
 target_expiration = None
 if use_custom_exp:
-    exp_date_input = st.sidebar.date_input("Target Expiration Date")
+    exp_date_input = st.sidebar.date_input("Target Expiration Date", key="exp_date_input")
     target_expiration = exp_date_input.strftime("%Y-%m-%d")
 
 # Hardcoded Core Fundamental Filters (retained for compatibility)
 min_revenue = 3.0 * 1e9  # $3.0 Billion
 min_cash = 1.0 * 1e9  # $1.0 Billion
 
-run_button = st.sidebar.button("Run Scanner", type="primary")
+st.sidebar.button("🧹 Clear All Filters", on_click=clear_all_filters, use_container_width=True)
+run_button = st.sidebar.button("Run Scanner", type="primary", use_container_width=True)
 
 # ==========================================
 # UNIVERSE & DATA FETCHING LOGIC
