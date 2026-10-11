@@ -21,12 +21,27 @@ st.markdown(
 # ==========================================
 # SIDEBAR CONFIGURATION
 # ==========================================
-FILTER_DEFAULTS = {'selected_universes': ['Custom Symbols'], 'custom_symbols': 'PLTR, MSTR, NVDA, TSLA, SPY, QQQ', 'available_cash': 100000.0, 'max_pe': 40.0, 'max_pct_support': 20.0, 'target_delta': 0.3, 'exclude_earnings': True, 'max_spread_pct': 15.0, 'use_custom_exp': False}
+FILTER_DEFAULTS = {
+    "selected_universes": ["Custom Symbols"],
+    "custom_symbols": "PLTR, MSTR, NVDA, TSLA, SPY, QQQ",
+    "available_cash": 100000.0,
+    "max_pe": 40.0,
+    "max_pct_support": 20.0,
+    "target_delta": 0.30,
+    "enable_pe": True,
+    "enable_support": True,
+    "enable_delta": True,
+    "exclude_earnings": True,
+    "max_spread_pct": 15.0,
+    "use_custom_exp": False,
+}
 
-def clear_all_filters():
-    for name, default in FILTER_DEFAULTS.items():
-        st.session_state[name] = default
-    st.session_state.pop("exp_date_input", None)
+
+def clear_screening_filters():
+    """Disable only the three optional screening limits."""
+    for key in ("enable_pe", "enable_support", "enable_delta"):
+        st.session_state[key] = False
+
 
 for name, default in FILTER_DEFAULTS.items():
     if name not in st.session_state:
@@ -66,23 +81,28 @@ available_cash = st.sidebar.number_input(
     key="available_cash",
 )
 
+enable_pe = st.sidebar.checkbox("Enable Max P/E", key="enable_pe")
 max_pe = st.sidebar.number_input(
-    "Max P/E Ratio (S&P 500 only)",
-    value=40.0,
-    step=1.0,
-    help="Filters valuation for standard equities. Ignored for Mag 7, ETFs, and custom symbols.",
-    key="max_pe",
+    "Max P/E Ratio (S&P 500 only)", step=1.0,
+    help="Applies to standard S&P 500 equities, not Mag 7, ETFs or custom symbols.",
+    disabled=not enable_pe, key="max_pe",
 )
+enable_support = st.sidebar.checkbox("Enable 200-Day SMA Distance Limit", key="enable_support")
 max_pct_support = st.sidebar.number_input(
-    "Max % Above 200-Day SMA (Support)",
-    value=20.0,
-    step=1.0,
-    help="Filters for stocks trading within X% of their long-term 200-day moving average support level.",
-    key="max_pct_support",
+    "Max % Above 200-Day SMA (Support)", step=1.0,
+    help="Maximum percentage above the 200-day simple moving average.",
+    disabled=not enable_support, key="max_pct_support",
 )
+enable_delta = st.sidebar.checkbox("Enable Target Put Delta", key="enable_delta")
 target_delta = st.sidebar.number_input(
-    "Target Put Delta (OTM)", value=0.30, step=0.05, format="%.2f",
-    key="target_delta",
+    "Target Put Delta (OTM)", step=0.05, format="%.2f",
+    help="Strike-distance approximation, not an actual options Greek.",
+    disabled=not enable_delta, key="target_delta",
+)
+st.sidebar.button(
+    "🧹 Clear Filters", on_click=clear_screening_filters,
+    use_container_width=True,
+    help="Turn off P/E, 200-day SMA distance, and target delta only.",
 )
 
 st.sidebar.markdown("---")
@@ -113,7 +133,6 @@ if use_custom_exp:
 min_revenue = 3.0 * 1e9  # $3.0 Billion
 min_cash = 1.0 * 1e9  # $1.0 Billion
 
-st.sidebar.button("🧹 Clear All Filters", on_click=clear_all_filters, use_container_width=True)
 run_button = st.sidebar.button("Run Scanner", type="primary", use_container_width=True)
 
 # ==========================================
@@ -219,7 +238,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 
-def analyze_puts(ticker_symbol, exp_date, spot_price, expiry_label, target_delta, max_spread, check_earnings):
+def analyze_puts(ticker_symbol, exp_date, spot_price, expiry_label, target_delta, max_spread, check_earnings, use_delta=True):
     """Extracts optimal put option contract specs."""
     if check_earnings and check_earnings_conflict(ticker_symbol, exp_date):
         return None
@@ -235,9 +254,15 @@ def analyze_puts(ticker_symbol, exp_date, spot_price, expiry_label, target_delta
         if otm_puts.empty:
             otm_puts = puts
 
-        # Retain the original strike-distance proxy for delta.
-        otm_puts["target_dist"] = abs((otm_puts["strike"] / spot_price) - (1.0 - (target_delta * 0.15)))
-        chosen_put = otm_puts.loc[otm_puts["target_dist"].idxmin()]
+        if use_delta:
+            # Existing strike-distance proxy (not a true delta calculation).
+            otm_puts["target_dist"] = abs(
+                (otm_puts["strike"] / spot_price) - (1.0 - (target_delta * 0.15))
+            )
+            chosen_put = otm_puts.loc[otm_puts["target_dist"].idxmin()]
+        else:
+            # No delta target: choose the nearest-to-money OTM put.
+            chosen_put = otm_puts.loc[otm_puts["strike"].idxmax()]
 
         strike = chosen_put["strike"]
         bid = chosen_put["bid"] if pd.notna(chosen_put["bid"]) else 0.0
@@ -339,8 +364,8 @@ if run_button:
                 current_rsi = rsi_series.iloc[-1] if not rsi_series.empty else 50.0
 
                 if (
-                    pe_ratio <= max_pe
-                    and pct_above_support <= max_pct_support
+                    (not enable_pe or pe_ratio <= max_pe)
+                    and (not enable_support or pct_above_support <= max_pct_support)
                     and current_rsi <= 65.0
                 ):
                     passed_tickers.append(ticker)
@@ -365,17 +390,17 @@ if run_button:
 
                     if target_expiration:
                         if target_expiration in exp_dates:
-                            res = analyze_puts(ticker, target_expiration, spot_price, f"Custom ({target_expiration})", target_delta, max_spread_pct, exclude_earnings)
+                            res = analyze_puts(ticker, target_expiration, spot_price, f"Custom ({target_expiration})", target_delta, max_spread_pct, exclude_earnings, enable_delta)
                             if res:
                                 results.append(res)
                     else:
                         weekly_exp, monthly_exp = find_target_expirations(exp_dates)
                         if weekly_exp:
-                            w_res = analyze_puts(ticker, weekly_exp, spot_price, "5-Day Weekly", target_delta, max_spread_pct, exclude_earnings)
+                            w_res = analyze_puts(ticker, weekly_exp, spot_price, "5-Day Weekly", target_delta, max_spread_pct, exclude_earnings, enable_delta)
                             if w_res:
                                 results.append(w_res)
                         if monthly_exp:
-                            m_res = analyze_puts(ticker, monthly_exp, spot_price, "30-Day Monthly", target_delta, max_spread_pct, exclude_earnings)
+                            m_res = analyze_puts(ticker, monthly_exp, spot_price, "30-Day Monthly", target_delta, max_spread_pct, exclude_earnings, enable_delta)
                             if m_res:
                                 results.append(m_res)
                 except Exception:
